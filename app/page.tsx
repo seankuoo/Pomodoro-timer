@@ -1,17 +1,25 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Play, Pause, RotateCcw, CheckCircle2, Sun, Moon, Settings } from "lucide-react";
+import { Play, Pause, RotateCcw, CheckCircle2, Sun, Moon, Settings, LogOut, Loader2 } from "lucide-react";
+import { supabase } from "./utils/supabase";
+import type { User } from "@supabase/supabase-js";
 
-const STORAGE_KEY = "pomodoro_history";
+// ─── Constants ──────────────────────────────────────────────────────────────
 const THEME_KEY = "pomodoro_theme";
 const SETTINGS_KEY = "pomodoro_settings";
-
 const DEFAULT_FOCUS_MIN = 25;
 const DEFAULT_BREAK_MIN = 5;
 
 type Mode = "focus" | "break";
 
+type Session = {
+  id: string;
+  focus_minutes: number;
+  created_at: string;
+};
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60).toString().padStart(2, "0");
   const s = (seconds % 60).toString().padStart(2, "0");
@@ -19,53 +27,165 @@ function formatTime(seconds: number): string {
 }
 
 function formatTimestamp(iso: string): string {
-  return new Date(iso).toLocaleTimeString("zh-CN", {
+  return new Date(iso).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function readHistory(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Returns the clamped integer, or null if invalid (not 1–120 integer). */
 function clampMinutes(val: string): number | null {
   const n = parseInt(val, 10);
   if (!isFinite(n) || n < 1 || n > 120) return null;
   return n;
 }
 
-export default function Home() {
-  // ─── Settings ──────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// Auth Panel
+// ════════════════════════════════════════════════════════════════════════════
+function AuthPanel() {
+  const [isLogin, setIsLogin] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      if (isLogin) {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) setError(error.message);
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) setError(error.message);
+        else setMessage("注册成功！如需邮件验证，请查收邮件后再登录。");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <main className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-neutral-950 transition-colors duration-300 px-4">
+      <h1 className="text-sm font-semibold tracking-[0.25em] uppercase text-neutral-400 dark:text-neutral-500 mb-10 select-none">
+        Pomodoro
+      </h1>
+
+      <div className="w-full max-w-sm bg-white dark:bg-neutral-900 rounded-2xl shadow-xl border border-neutral-100 dark:border-neutral-800 p-8 flex flex-col gap-6">
+        {/* Toggle */}
+        <div className="flex rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-700 text-sm font-medium select-none">
+          <button
+            type="button"
+            onClick={() => { setIsLogin(true); setError(null); setMessage(null); }}
+            className={`flex-1 py-2.5 transition-colors duration-150 ${isLogin
+              ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+              : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
+              }`}
+          >
+            登录
+          </button>
+          <button
+            type="button"
+            onClick={() => { setIsLogin(false); setError(null); setMessage(null); }}
+            className={`flex-1 py-2.5 transition-colors duration-150 ${!isLogin
+              ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+              : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
+              }`}
+          >
+            注册
+          </button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="auth-email" className="text-xs text-neutral-500 dark:text-neutral-400 font-medium select-none">
+              邮箱
+            </label>
+            <input
+              id="auth-email"
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 bg-neutral-50 dark:bg-neutral-800 outline-none focus:border-neutral-400 dark:focus:border-neutral-500 transition-colors placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="auth-password" className="text-xs text-neutral-500 dark:text-neutral-400 font-medium select-none">
+              密码
+            </label>
+            <input
+              id="auth-password"
+              type="password"
+              required
+              autoComplete={isLogin ? "current-password" : "new-password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="至少 6 位"
+              className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 bg-neutral-50 dark:bg-neutral-800 outline-none focus:border-neutral-400 dark:focus:border-neutral-500 transition-colors placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs text-red-500 dark:text-red-400 select-none">{error}</p>
+          )}
+          {message && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 select-none">{message}</p>
+          )}
+
+          <button
+            id="btn-auth-submit"
+            type="submit"
+            disabled={loading}
+            className="flex items-center justify-center gap-2 py-2.5 mt-1 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-sm font-medium rounded-xl hover:bg-neutral-700 dark:hover:bg-neutral-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 select-none"
+          >
+            {loading && <Loader2 size={14} className="animate-spin" />}
+            {isLogin ? "登录" : "注册"}
+          </button>
+        </form>
+      </div>
+    </main>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main App (only rendered when user is logged in)
+// ════════════════════════════════════════════════════════════════════════════
+function PomodoroApp({ user }: { user: User }) {
+  // ─── Settings ─────────────────────────────────────────────────────────────
   const [focusMin, setFocusMin] = useState(DEFAULT_FOCUS_MIN);
   const [breakMin, setBreakMin] = useState(DEFAULT_BREAK_MIN);
   const [showSettings, setShowSettings] = useState(false);
   const [draftFocus, setDraftFocus] = useState(String(DEFAULT_FOCUS_MIN));
   const [draftBreak, setDraftBreak] = useState(String(DEFAULT_BREAK_MIN));
 
-  // ─── Timer ─────────────────────────────────────────────────────────────────
+  // ─── Timer ────────────────────────────────────────────────────────────────
   const [timeLeft, setTimeLeft] = useState(DEFAULT_FOCUS_MIN * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<Mode>("focus");
   const [justFinished, setJustFinished] = useState<"none" | "focus" | "break">("none");
-  const [history, setHistory] = useState<string[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Flag set by the interval when countdown hits 0 — read by a sibling effect.
   const justCompletedRef = useRef(false);
 
-  // ─── Dark Mode ─────────────────────────────────────────────────────────────
+  // ─── Cloud History ────────────────────────────────────────────────────────
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+
+  // ─── Dark Mode ────────────────────────────────────────────────────────────
   const [isDark, setIsDark] = useState(false);
 
-  // ─── Web Audio API ─────────────────────────────────────────────────────────
+  // ─── Audio ────────────────────────────────────────────────────────────────
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const initAudio = useCallback(() => {
@@ -89,9 +209,21 @@ export default function Home() {
     osc.stop(ctx.currentTime + 1.6);
   }, []);
 
-  // ─── Mount: load persisted settings & history ───────────────────────────────
+  // ─── Fetch sessions from Supabase ─────────────────────────────────────────
+  const fetchSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id, focus_minutes, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+    if (!error && data) setSessions(data as Session[]);
+    setSessionsLoading(false);
+  }, [user.id]);
+
+  // ─── Mount: load persisted settings & cloud history ───────────────────────
   useEffect(() => {
-    setHistory(readHistory());
+    fetchSessions();
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (raw) {
@@ -102,9 +234,9 @@ export default function Home() {
         if (bm >= 1 && bm <= 120) setBreakMin(bm);
       }
     } catch { /* ignore */ }
-  }, []);
+  }, [fetchSessions]);
 
-  // ─── Dark Mode init ─────────────────────────────────────────────────────────
+  // ─── Dark Mode init ───────────────────────────────────────────────────────
   useEffect(() => {
     const stored = localStorage.getItem(THEME_KEY);
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -129,23 +261,20 @@ export default function Home() {
     });
   }, []);
 
-  // ─── Countdown interval ─────────────────────────────────────────────────────
+  // ─── Countdown interval ───────────────────────────────────────────────────
   useEffect(() => {
     if (!isRunning) return;
-
     intervalRef.current = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(intervalRef.current!);
           intervalRef.current = null;
-          // Signal the transition effect
           justCompletedRef.current = true;
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -154,40 +283,35 @@ export default function Home() {
     };
   }, [isRunning]);
 
-  // ─── Transition handler — fires when timeLeft hits 0 ───────────────────────
+  // ─── Transition handler — fires when timeLeft hits 0 ──────────────────────
   useEffect(() => {
     if (timeLeft !== 0 || !justCompletedRef.current) return;
     justCompletedRef.current = false;
-
     setIsRunning(false);
     playBell();
 
     if (mode === "focus") {
-      // Log this focus session
-      const now = new Date().toISOString();
-      setHistory((h) => {
-        const next = [...h, now];
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        return next;
-      });
+      // Write to Supabase sessions table
+      supabase
+        .from("sessions")
+        .insert({ user_id: user.id, focus_minutes: focusMin })
+        .then(({ error }) => {
+          if (!error) fetchSessions();
+        });
+
       setJustFinished("focus");
       setMode("break");
       setTimeLeft(breakMin * 60);
     } else {
-      // Break is over — reset to focus, wait for user to start
       setJustFinished("break");
       setMode("focus");
       setTimeLeft(focusMin * 60);
     }
-  }, [timeLeft, mode, focusMin, breakMin, playBell]);
+  }, [timeLeft, mode, focusMin, breakMin, playBell, user.id, fetchSessions]);
 
-  // ─── Controls ──────────────────────────────────────────────────────────────
+  // ─── Controls ─────────────────────────────────────────────────────────────
   const handleStart = useCallback(() => {
-    if (timeLeft > 0) {
-      initAudio();
-      setJustFinished("none");
-      setIsRunning(true);
-    }
+    if (timeLeft > 0) { initAudio(); setJustFinished("none"); setIsRunning(true); }
   }, [timeLeft, initAudio]);
 
   const handlePause = useCallback(() => setIsRunning(false), []);
@@ -199,7 +323,7 @@ export default function Home() {
     setJustFinished("none");
   }, [focusMin]);
 
-  // ─── Settings modal ─────────────────────────────────────────────────────────
+  // ─── Settings modal ───────────────────────────────────────────────────────
   const openSettings = useCallback(() => {
     setDraftFocus(String(focusMin));
     setDraftBreak(String(breakMin));
@@ -226,7 +350,12 @@ export default function Home() {
     setShowSettings(false);
   }, [draftFocus, draftBreak]);
 
-  // ─── Derived display values ─────────────────────────────────────────────────
+  // ─── Sign out ─────────────────────────────────────────────────────────────
+  const handleSignOut = useCallback(async () => {
+    await supabase.auth.signOut();
+  }, []);
+
+  // ─── Derived display values ────────────────────────────────────────────────
   const isFinished = timeLeft === 0;
   const isBreak = mode === "break";
 
@@ -242,8 +371,25 @@ export default function Home() {
   return (
     <main className="relative min-h-screen flex flex-col items-center justify-center bg-white dark:bg-neutral-950 pb-16 transition-colors duration-300">
 
-      {/* ─── Top-right buttons ─── */}
+      {/* ─── Top-right controls ─── */}
       <div className="fixed top-4 right-4 flex items-center gap-1">
+
+        {/* User email + Sign out */}
+        <div className="flex items-center gap-2 mr-1">
+          <span className="text-xs text-neutral-400 dark:text-neutral-500 select-none hidden sm:block max-w-[160px] truncate">
+            {user.email}
+          </span>
+          <button
+            id="btn-sign-out"
+            onClick={handleSignOut}
+            aria-label="Sign out"
+            title="登出"
+            className="p-2 rounded-full text-neutral-400 hover:text-red-500 dark:text-neutral-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-all duration-200 select-none"
+          >
+            <LogOut size={16} strokeWidth={2} />
+          </button>
+        </div>
+
         <button
           id="btn-settings"
           onClick={openSettings}
@@ -269,8 +415,8 @@ export default function Home() {
 
       {/* ─── Mode Chip ─── */}
       <div className={`mb-10 px-3 py-0.5 rounded-full text-[0.65rem] font-semibold tracking-[0.2em] uppercase select-none transition-colors duration-500 ${isBreak
-          ? "bg-sky-100 dark:bg-sky-900/40 text-sky-500 dark:text-sky-400"
-          : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-500 dark:text-emerald-400"
+        ? "bg-sky-100 dark:bg-sky-900/40 text-sky-500 dark:text-sky-400"
+        : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-500 dark:text-emerald-400"
         }`}>
         {isBreak ? "Break" : "Focus"}
       </div>
@@ -278,17 +424,17 @@ export default function Home() {
       {/* ─── Timer Display ─── */}
       <div className="relative flex items-center justify-center mb-16">
         <div className={`absolute w-72 h-72 rounded-full border transition-colors duration-500 ${isFinished
-            ? isBreak ? "border-sky-200 dark:border-sky-900" : "border-emerald-200 dark:border-emerald-900"
-            : isRunning
-              ? isBreak ? "border-sky-300 dark:border-sky-700" : "border-neutral-300 dark:border-neutral-700"
-              : isBreak ? "border-sky-100 dark:border-sky-900/50" : "border-neutral-100 dark:border-neutral-800"
+          ? isBreak ? "border-sky-200 dark:border-sky-900" : "border-emerald-200 dark:border-emerald-900"
+          : isRunning
+            ? isBreak ? "border-sky-300 dark:border-sky-700" : "border-neutral-300 dark:border-neutral-700"
+            : isBreak ? "border-sky-100 dark:border-sky-900/50" : "border-neutral-100 dark:border-neutral-800"
           }`} />
         <span
           className={`text-[7rem] font-extralight tracking-tight leading-none tabular-nums select-none transition-colors duration-500 ${isFinished
-              ? isBreak ? "text-sky-500" : "text-emerald-500"
-              : isBreak
-                ? "text-sky-500 dark:text-sky-400"
-                : "text-neutral-900 dark:text-neutral-100"
+            ? isBreak ? "text-sky-500" : "text-emerald-500"
+            : isBreak
+              ? "text-sky-500 dark:text-sky-400"
+              : "text-neutral-900 dark:text-neutral-100"
             }`}
           style={{ fontVariantNumeric: "tabular-nums" }}
         >
@@ -330,46 +476,48 @@ export default function Home() {
 
       {/* ─── Status ─── */}
       <p className={`mt-10 select-none transition-all duration-300 ${statusHighlight
-          ? `text-base font-semibold tracking-wide animate-pulse ${justFinished === "focus" ? "text-emerald-500" : "text-sky-500"}`
-          : "text-xs text-neutral-300 dark:text-neutral-600 tracking-widest uppercase"
+        ? `text-base font-semibold tracking-wide animate-pulse ${justFinished === "focus" ? "text-emerald-500" : "text-sky-500"}`
+        : "text-xs text-neutral-300 dark:text-neutral-600 tracking-widest uppercase"
         }`}>
         {statusText}
       </p>
 
-      {/* ─── History ─── */}
-      {history.length > 0 && (
-        <section id="history" className="mt-16 w-full max-w-xs flex flex-col items-center gap-1">
-          <p className="text-xs text-neutral-400 dark:text-neutral-500 tracking-[0.2em] uppercase mb-3 select-none">
-            历史记录 · 共{history.length}次
-          </p>
+      {/* ─── Cloud History ─── */}
+      <section id="history" className="mt-16 w-full max-w-xs flex flex-col items-center gap-1">
+        <p className="text-xs text-neutral-400 dark:text-neutral-500 tracking-[0.2em] uppercase mb-3 select-none">
+          {sessionsLoading
+            ? "加载中…"
+            : sessions.length === 0
+              ? "暂无记录"
+              : `历史记录 · 共 ${sessions.length} 次`}
+        </p>
+        {sessions.length > 0 && (
           <ul className="w-full flex flex-col gap-2">
-            {[...history].reverse().map((iso, idx) => (
+            {sessions.map((s) => (
               <li
-                key={`${idx}-${iso}`}
+                key={s.id}
                 className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-100 dark:border-neutral-800"
               >
                 <span className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
                   <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
-                  完成了一次专注
+                  专注了 {s.focus_minutes} 分钟
                 </span>
                 <span className="text-xs text-neutral-400 dark:text-neutral-500 tabular-nums">
-                  {history.length - idx} · {formatTimestamp(iso)}
+                  {formatTimestamp(s.created_at)}
                 </span>
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* ─── Settings Modal ─── */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/30 dark:bg-black/50 backdrop-blur-sm"
             onClick={handleCancel}
           />
-          {/* Panel — stop propagation so clicks inside don't close the modal */}
           <div
             className="relative bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-neutral-100 dark:border-neutral-800 p-8 w-80 flex flex-col gap-6"
             onClick={(e) => e.stopPropagation()}
@@ -378,7 +526,6 @@ export default function Home() {
               Settings
             </h2>
 
-            {/* Focus Time */}
             <div className="flex flex-col gap-1.5">
               <label htmlFor="input-focus" className="text-xs text-neutral-500 dark:text-neutral-400 font-medium select-none">
                 Focus Time (minutes)
@@ -391,8 +538,8 @@ export default function Home() {
                 value={draftFocus}
                 onChange={(e) => setDraftFocus(e.target.value)}
                 className={`w-full px-4 py-2.5 rounded-xl border text-sm text-neutral-900 dark:text-neutral-100 bg-neutral-50 dark:bg-neutral-800 outline-none transition-colors ${draftFocusValid
-                    ? "border-neutral-200 dark:border-neutral-700 focus:border-neutral-400 dark:focus:border-neutral-500"
-                    : "border-red-300 dark:border-red-800 focus:border-red-400"
+                  ? "border-neutral-200 dark:border-neutral-700 focus:border-neutral-400 dark:focus:border-neutral-500"
+                  : "border-red-300 dark:border-red-800 focus:border-red-400"
                   }`}
               />
               {!draftFocusValid && (
@@ -400,7 +547,6 @@ export default function Home() {
               )}
             </div>
 
-            {/* Break Time */}
             <div className="flex flex-col gap-1.5">
               <label htmlFor="input-break" className="text-xs text-neutral-500 dark:text-neutral-400 font-medium select-none">
                 Break Time (minutes)
@@ -413,8 +559,8 @@ export default function Home() {
                 value={draftBreak}
                 onChange={(e) => setDraftBreak(e.target.value)}
                 className={`w-full px-4 py-2.5 rounded-xl border text-sm text-neutral-900 dark:text-neutral-100 bg-neutral-50 dark:bg-neutral-800 outline-none transition-colors ${draftBreakValid
-                    ? "border-neutral-200 dark:border-neutral-700 focus:border-neutral-400 dark:focus:border-neutral-500"
-                    : "border-red-300 dark:border-red-800 focus:border-red-400"
+                  ? "border-neutral-200 dark:border-neutral-700 focus:border-neutral-400 dark:focus:border-neutral-500"
+                  : "border-red-300 dark:border-red-800 focus:border-red-400"
                   }`}
               />
               {!draftBreakValid && (
@@ -422,7 +568,6 @@ export default function Home() {
               )}
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3 pt-2">
               <button
                 id="btn-save"
@@ -445,4 +590,37 @@ export default function Home() {
       )}
     </main>
   );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Root — Auth gate
+// ════════════════════════════════════════════════════════════════════════════
+export default function Home() {
+  const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = loading
+
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Loading state
+  if (user === undefined) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-white dark:bg-neutral-950">
+        <Loader2 size={24} className="animate-spin text-neutral-300 dark:text-neutral-600" />
+      </main>
+    );
+  }
+
+  if (user === null) return <AuthPanel />;
+  return <PomodoroApp user={user} />;
 }
